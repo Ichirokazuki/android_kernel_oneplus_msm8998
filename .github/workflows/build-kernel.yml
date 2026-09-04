@@ -73,41 +73,9 @@ jobs:
       - name: Integrate KernelSU-Next
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
-          echo "=== Integrating KernelSU-Next ==="
+          echo "=== Integrating KernelSU-Next for non-GKI 4.4 ==="
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next || \
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s main || true
-
-      - name: Integrate SUSFS (susfs4ksu 4.9/4.4 legacy)
-        run: |
-          cd "$GITHUB_WORKSPACE"
-          echo "=== Cloning SUSFS legacy branch ==="
-          git clone --depth=1 -b kernel-4.9 https://gitlab.com/simonpunk/susfs4ksu.git "$GITHUB_WORKSPACE/susfs_src" || \
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git "$GITHUB_WORKSPACE/susfs_src" || true
-
-          if [ -d "$GITHUB_WORKSPACE/susfs_src/kernel_patches" ]; then
-            echo "Copying SUSFS kernel files..."
-            mkdir -p "$GITHUB_WORKSPACE/kernel/fs"
-            mkdir -p "$GITHUB_WORKSPACE/kernel/include/linux"
-            find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "susfs.c" -exec cp {} "$GITHUB_WORKSPACE/kernel/fs/" \; || true
-            find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "susfs.h" -exec cp {} "$GITHUB_WORKSPACE/kernel/include/linux/" \; || true
-            find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "sus_su.h" -exec cp {} "$GITHUB_WORKSPACE/kernel/include/linux/" \; || true
-
-            cd "$GITHUB_WORKSPACE/kernel"
-            for p in $(find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "*50_add_susfs_in_kernel*.patch" 2>/dev/null); do
-              echo "Applying kernel patch: $p"
-              patch -p1 -N --dry-run -s < "$p" 2>/dev/null && patch -p1 -N -s < "$p" || echo "Kernel patch skipped/already present."
-            done
-
-            KSU_DIR="$GITHUB_WORKSPACE/kernel/KernelSU"
-            [ ! -d "$KSU_DIR" ] && KSU_DIR="$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            if [ -d "$KSU_DIR" ]; then
-              cd "$KSU_DIR"
-              for p in $(find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "*10_enable_susfs_for_ksu*.patch" 2>/dev/null); do
-                echo "Applying KSU patch: $p"
-                patch -p1 -N --dry-run -s < "$p" 2>/dev/null && patch -p1 -N -s < "$p" || echo "KSU patch skipped/already present."
-              done
-            fi
-          fi
 
       - name: Apply Defconfig Tweaks
         run: |
