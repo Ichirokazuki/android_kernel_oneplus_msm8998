@@ -142,28 +142,45 @@ jobs:
 
       - name: Package with AnyKernel3
         run: |
+          echo "=== Copying compiled kernel files to AnyKernel3 ==="
           KERNEL_OUT="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot"
-          
+          ls -la "$KERNEL_OUT" || true
+
+          # Copy Image.gz-dtb or Image.gz or Image
           if [ -f "$KERNEL_OUT/Image.gz-dtb" ]; then
-            cp "$KERNEL_OUT/Image.gz-dtb" "$GITHUB_WORKSPACE/anykernel/"
+            echo "Found Image.gz-dtb"
+            cp "$KERNEL_OUT/Image.gz-dtb" "$GITHUB_WORKSPACE/anykernel/Image.gz-dtb"
           elif [ -f "$KERNEL_OUT/Image.gz" ]; then
-            cp "$KERNEL_OUT/Image.gz" "$GITHUB_WORKSPACE/anykernel/"
-            if [ -f "$KERNEL_OUT/dtb.img" ]; then
-              cp "$KERNEL_OUT/dtb.img" "$GITHUB_WORKSPACE/anykernel/"
-            fi
+            echo "Found Image.gz"
+            cp "$KERNEL_OUT/Image.gz" "$GITHUB_WORKSPACE/anykernel/Image.gz"
           elif [ -f "$KERNEL_OUT/Image" ]; then
-            cp "$KERNEL_OUT/Image" "$GITHUB_WORKSPACE/anykernel/"
+            echo "Found Image"
+            cp "$KERNEL_OUT/Image" "$GITHUB_WORKSPACE/anykernel/Image"
           else
-            echo "Error: Compiled kernel image not found in $KERNEL_OUT!"
-            ls -la "$KERNEL_OUT" || true
-            exit 1
+            echo "Searching recursively for kernel images..."
+            find "$KERNEL_OUT" -type f -name "Image*" -exec cp {} "$GITHUB_WORKSPACE/anykernel/" \; || true
           fi
 
+          # Copy dtb files if separate
+          if [ -f "$KERNEL_OUT/dtb.img" ]; then
+            cp "$KERNEL_OUT/dtb.img" "$GITHUB_WORKSPACE/anykernel/dtb.img"
+          elif [ -f "$KERNEL_OUT/dtb" ]; then
+            cp "$KERNEL_OUT/dtb" "$GITHUB_WORKSPACE/anykernel/dtb"
+          fi
+
+          # Verify AnyKernel3 content
           cd "$GITHUB_WORKSPACE/anykernel"
-          ZIP_NAME="kernel-dumpling-${BUILD_TIME}.zip"
-          zip -r9 "$ZIP_NAME" * -x .git .github README.md *placeholder
+          ls -la
+
+          # Zip package
+          TIME_TAG="${{ env.BUILD_TIME }}"
+          [ -z "$TIME_TAG" ] && TIME_TAG=$(date +'%Y%m%d_%H%M%S')
+          ZIP_NAME="kernel-dumpling-${TIME_TAG}.zip"
+          zip -r9 "$ZIP_NAME" . -x ".git/*" -x ".github/*" -x "README.md"
+          
           echo "ZIP_PATH=$GITHUB_WORKSPACE/anykernel/$ZIP_NAME" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          echo "Successfully created $ZIP_NAME"
 
       - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
