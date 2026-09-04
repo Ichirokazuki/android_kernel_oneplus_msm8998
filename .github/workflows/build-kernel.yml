@@ -14,7 +14,7 @@ on:
       kernel_defconfig:
         description: 'Defconfig name'
         required: true
-        default: 'dumpling_defconfig'
+        default: 'lineage_oneplus5_defconfig'
   push:
     branches:
       - main
@@ -26,7 +26,7 @@ env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
   KERNEL_REPO: ${{ github.event.inputs.kernel_repo || 'https://github.com/LineageOS/android_kernel_oneplus_msm8998' }}
   KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch || 'lineage-21' }}
-  DEFCONFIG_INPUT: ${{ github.event.inputs.kernel_defconfig || 'dumpling_defconfig' }}
+  DEFCONFIG_INPUT: ${{ github.event.inputs.kernel_defconfig || 'lineage_oneplus5_defconfig' }}
 
 jobs:
   build:
@@ -78,12 +78,30 @@ jobs:
           DEFCONFIG="$DEFCONFIG_INPUT"
 
           if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
-            if [ -f "arch/arm64/configs/dumpling_defconfig" ]; then
+            echo "Specified defconfig ($DEFCONFIG) not directly found. Searching available configs..."
+            if [ -f "arch/arm64/configs/lineage_oneplus5_defconfig" ]; then
+              DEFCONFIG="lineage_oneplus5_defconfig"
+            elif [ -f "arch/arm64/configs/lineageos_oneplus5_defconfig" ]; then
+              DEFCONFIG="lineageos_oneplus5_defconfig"
+            elif [ -f "arch/arm64/configs/oneplus5_defconfig" ]; then
+              DEFCONFIG="oneplus5_defconfig"
+            elif [ -f "arch/arm64/configs/dumpling_defconfig" ]; then
               DEFCONFIG="dumpling_defconfig"
             elif [ -f "arch/arm64/configs/cheeseburger_defconfig" ]; then
               DEFCONFIG="cheeseburger_defconfig"
             elif [ -f "arch/arm64/configs/msm8998_defconfig" ]; then
               DEFCONFIG="msm8998_defconfig"
+            elif [ -f "arch/arm64/configs/msmcortex-perf_defconfig" ]; then
+              DEFCONFIG="msmcortex-perf_defconfig"
+            else
+              DETECTED=$(find arch/arm64/configs -maxdepth 2 -type f \( -name "*oneplus5*" -o -name "*dumpling*" -o -name "*cheeseburger*" -o -name "*msm8998*" -o -name "*msmcortex*" \) | head -n 1)
+              if [ -n "$DETECTED" ]; then
+                DEFCONFIG=$(echo "$DETECTED" | sed 's|arch/arm64/configs/||')
+              else
+                echo "ERROR: No valid defconfig found in arch/arm64/configs!"
+                ls -la arch/arm64/configs/
+                exit 1
+              fi
             fi
           fi
 
