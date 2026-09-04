@@ -209,34 +209,46 @@ jobs:
           touch "$GITHUB_WORKSPACE/ramdisk_dummy/.keep"
           (cd "$GITHUB_WORKSPACE/ramdisk_dummy" && find . | cpio -o -H newc | gzip -9 > "$GITHUB_WORKSPACE/empty_ramdisk.cpio.gz")
 
-          # Ensure mkbootimg is present or download python fallback
-          if ! command -v mkbootimg &> /dev/null; then
-            echo "Downloading mkbootimg helper..."
-            curl -sLo "$GITHUB_WORKSPACE/mkbootimg.py" "https://raw.githubusercontent.com/osm0sis/mkbootimg/master/mkbootimg" || true
-            chmod +x "$GITHUB_WORKSPACE/mkbootimg.py" || true
-            MKBOOTIMG_BIN="python3 $GITHUB_WORKSPACE/mkbootimg.py"
-          else
-            MKBOOTIMG_BIN="mkbootimg"
-          fi
+          CMDLINE="androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x237 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 service_locator.enable=1 earlycon=msm_hsl_uart,0x00c19000"
 
           if [ -n "$KERNEL_IMAGE" ] && [ -f "$KERNEL_IMAGE" ]; then
-            $MKBOOTIMG_BIN \
-              --kernel "$KERNEL_IMAGE" \
-              --ramdisk "$GITHUB_WORKSPACE/empty_ramdisk.cpio.gz" \
-              --cmdline "androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x237 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 service_locator.enable=1 earlycon=msm_hsl_uart,0x00c19000" \
-              --base 0x00000000 \
-              --pagesize 4096 \
-              --kernel_offset 0x00008000 \
-              --ramdisk_offset 0x02000000 \
-              --tags_offset 0x01e00000 \
-              --output "$GITHUB_WORKSPACE/anykernel/boot.img" || true
+            echo "Using kernel image: $KERNEL_IMAGE"
+            # Try native mkbootimg with -o
+            if command -v mkbootimg &> /dev/null; then
+              mkbootimg \
+                --kernel "$KERNEL_IMAGE" \
+                --ramdisk "$GITHUB_WORKSPACE/empty_ramdisk.cpio.gz" \
+                --cmdline "$CMDLINE" \
+                --base 0x00000000 \
+                --pagesize 4096 \
+                --kernel_offset 0x00008000 \
+                --ramdisk_offset 0x02000000 \
+                --tags_offset 0x01e00000 \
+                -o "$GITHUB_WORKSPACE/anykernel/boot.img" || true
+            fi
+
+            # Fallback to python mkbootimg if needed
+            if [ ! -f "$GITHUB_WORKSPACE/anykernel/boot.img" ]; then
+              echo "Downloading python mkbootimg fallback..."
+              python3 -m pip install --upgrade pip mkbootimg 2>/dev/null || true
+              mkbootimg \
+                --kernel "$KERNEL_IMAGE" \
+                --ramdisk "$GITHUB_WORKSPACE/empty_ramdisk.cpio.gz" \
+                --cmdline "$CMDLINE" \
+                --base 0x00000000 \
+                --pagesize 4096 \
+                --kernel_offset 0x00008000 \
+                --ramdisk_offset 0x02000000 \
+                --tags_offset 0x01e00000 \
+                -o "$GITHUB_WORKSPACE/anykernel/boot.img" || true
+            fi
 
             if [ -f "$GITHUB_WORKSPACE/anykernel/boot.img" ]; then
-              echo "boot.img successfully created inside anykernel folder!"
+              echo "boot.img successfully created!"
               cp "$GITHUB_WORKSPACE/anykernel/boot.img" "$GITHUB_WORKSPACE/boot.img"
               echo "BOOT_IMG_PATH=$GITHUB_WORKSPACE/boot.img" >> $GITHUB_ENV
             else
-              echo "Notice: mkbootimg did not produce boot.img; AnyKernel3 zip will still flash kernel dynamically."
+              echo "Warning: boot.img could not be created."
             fi
           fi
 
