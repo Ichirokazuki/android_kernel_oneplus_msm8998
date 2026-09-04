@@ -58,16 +58,14 @@ jobs:
             python3 \
             libncurses5 \
             ccache \
-            patch
+            patch \
+            libtinfo5
 
-      - name: Download Proton Clang & AOSP Toolchains
+      - name: Download Proton Clang Toolchain
         run: |
           mkdir -p "$GITHUB_WORKSPACE/toolchain"
-          echo "Cloning Proton Clang..."
+          echo "Cloning Proton Clang (self-contained toolchain)..."
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git "$GITHUB_WORKSPACE/toolchain/clang"
-          echo "Cloning AOSP GCC 4.9 Binutils..."
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git "$GITHUB_WORKSPACE/toolchain/gcc64"
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git "$GITHUB_WORKSPACE/toolchain/gcc32"
 
       - name: Clone Kernel Source
         run: |
@@ -113,7 +111,7 @@ jobs:
       - name: Build Kernel
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
-          export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$GITHUB_WORKSPACE/toolchain/gcc64/bin:$GITHUB_WORKSPACE/toolchain/gcc32/bin:$PATH"
+          export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
           export KBUILD_BUILD_USER="android-build"
@@ -125,8 +123,8 @@ jobs:
             HOSTCC=gcc \
             HOSTCXX=g++ \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             "$DEFCONFIG_NAME"
 
           echo "Compiling kernel..."
@@ -136,24 +134,11 @@ jobs:
             HOSTCC=gcc \
             HOSTCXX=g++ \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             KCFLAGS="-w" \
             HOSTCFLAGS="-w -fcommon" \
-            HOSTLDFLAGS="-w" || {
-              echo "Parallel build encountered an issue. Running single-threaded to isolate error:"
-              make O=out \
-                ARCH=arm64 \
-                CC=clang \
-                HOSTCC=gcc \
-                HOSTCXX=g++ \
-                CLANG_TRIPLE=aarch64-linux-gnu- \
-                CROSS_COMPILE=aarch64-linux-android- \
-                CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-                KCFLAGS="-w" \
-                HOSTCFLAGS="-w -fcommon" \
-                HOSTLDFLAGS="-w"
-            }
+            HOSTLDFLAGS="-w" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
       - name: Setup AnyKernel3
         run: |
