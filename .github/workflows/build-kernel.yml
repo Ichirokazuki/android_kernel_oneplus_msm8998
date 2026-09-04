@@ -77,24 +77,24 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next || \
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s main || true
 
-      - name: Integrate SUSFS (susfs4ksu) & Meta OverlayFS Patches
+      - name: Integrate SUSFS (susfs4ksu 4.9/4.4 legacy)
         run: |
           cd "$GITHUB_WORKSPACE"
-          echo "=== Cloning SUSFS for 4.4 Kernel ==="
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b kernel-4.4 "$GITHUB_WORKSPACE/susfs_src" || \
+          echo "=== Cloning SUSFS legacy branch ==="
+          git clone --depth=1 -b kernel-4.9 https://gitlab.com/simonpunk/susfs4ksu.git "$GITHUB_WORKSPACE/susfs_src" || \
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git "$GITHUB_WORKSPACE/susfs_src" || true
 
-          if [ -d "$GITHUB_WORKSPACE/susfs_src" ]; then
-            echo "Copying SUSFS files..."
+          if [ -d "$GITHUB_WORKSPACE/susfs_src/kernel_patches" ]; then
+            echo "Copying SUSFS kernel files..."
             mkdir -p "$GITHUB_WORKSPACE/kernel/fs"
             mkdir -p "$GITHUB_WORKSPACE/kernel/include/linux"
-            find "$GITHUB_WORKSPACE/susfs_src" -name "susfs.c" -exec cp {} "$GITHUB_WORKSPACE/kernel/fs/" \; || true
-            find "$GITHUB_WORKSPACE/susfs_src" -name "susfs.h" -exec cp {} "$GITHUB_WORKSPACE/kernel/include/linux/" \; || true
-            find "$GITHUB_WORKSPACE/susfs_src" -name "sus_su.h" -exec cp {} "$GITHUB_WORKSPACE/kernel/include/linux/" \; || true
+            find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "susfs.c" -exec cp {} "$GITHUB_WORKSPACE/kernel/fs/" \; || true
+            find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "susfs.h" -exec cp {} "$GITHUB_WORKSPACE/kernel/include/linux/" \; || true
+            find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "sus_su.h" -exec cp {} "$GITHUB_WORKSPACE/kernel/include/linux/" \; || true
 
             cd "$GITHUB_WORKSPACE/kernel"
-            for p in $(find "$GITHUB_WORKSPACE/susfs_src" -name "*50_add_susfs_in_kernel*.patch" 2>/dev/null); do
-              echo "Checking kernel patch: $p"
+            for p in $(find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "*50_add_susfs_in_kernel*.patch" 2>/dev/null); do
+              echo "Applying kernel patch: $p"
               patch -p1 -N --dry-run -s < "$p" 2>/dev/null && patch -p1 -N -s < "$p" || echo "Kernel patch skipped/already present."
             done
 
@@ -102,8 +102,8 @@ jobs:
             [ ! -d "$KSU_DIR" ] && KSU_DIR="$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
             if [ -d "$KSU_DIR" ]; then
               cd "$KSU_DIR"
-              for p in $(find "$GITHUB_WORKSPACE/susfs_src" -name "*10_enable_susfs_for_ksu*.patch" 2>/dev/null); do
-                echo "Checking KSU patch: $p"
+              for p in $(find "$GITHUB_WORKSPACE/susfs_src/kernel_patches" -name "*10_enable_susfs_for_ksu*.patch" 2>/dev/null); do
+                echo "Applying KSU patch: $p"
                 patch -p1 -N --dry-run -s < "$p" 2>/dev/null && patch -p1 -N -s < "$p" || echo "KSU patch skipped/already present."
               done
             fi
@@ -148,7 +148,7 @@ jobs:
           export KBUILD_BUILD_HOST="buildhost"
 
           echo "Generating configuration using $DEFCONFIG_NAME..."
-          make O=out ARCH=arm64 "$DEFCONFIG_NAME"
+          make O=out ARCH=arm64 CC=clang HOSTCC=gcc HOSTCXX=g++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- "$DEFCONFIG_NAME"
 
           echo "Compiling kernel..."
           make -j$(nproc --all) O=out \
@@ -158,7 +158,10 @@ jobs:
             HOSTCXX=g++ \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            KCFLAGS="-w" \
+            HOSTCFLAGS="-w -fcommon" \
+            HOSTLDFLAGS="-w"
 
       - name: Setup AnyKernel3
         run: |
