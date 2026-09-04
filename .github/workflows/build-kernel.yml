@@ -21,14 +21,16 @@ on:
     paths-ignore:
       - 'README.md'
 
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+  KERNEL_REPO: ${{ github.event.inputs.kernel_repo || 'https://github.com/LineageOS/android_kernel_oneplus_msm8998' }}
+  KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch || 'lineage-21' }}
+  DEFCONFIG_INPUT: ${{ github.event.inputs.kernel_defconfig || 'dumpling_defconfig' }}
+
 jobs:
   build:
     name: Compile Kernel
     runs-on: ubuntu-22.04
-    env:
-      KERNEL_REPO: ${{ github.event.inputs.kernel_repo || 'https://github.com/LineageOS/android_kernel_oneplus_msm8998' }}
-      KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch || 'lineage-21' }}
-      DEFCONFIG_INPUT: ${{ github.event.inputs.kernel_defconfig || 'dumpling_defconfig' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -55,15 +57,16 @@ jobs:
             python3 \
             libncurses5 \
             ccache \
-            patch \
-            gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi
+            patch
 
-      - name: Download Proton Clang Toolchain
+      - name: Download Proton Clang & AOSP Toolchains
         run: |
           mkdir -p "$GITHUB_WORKSPACE/toolchain"
           echo "Cloning Proton Clang..."
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git "$GITHUB_WORKSPACE/toolchain/clang"
+          echo "Cloning AOSP GCC 4.9 Binutils..."
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git "$GITHUB_WORKSPACE/toolchain/gcc64"
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git "$GITHUB_WORKSPACE/toolchain/gcc32"
 
       - name: Clone Kernel Source
         run: |
@@ -73,7 +76,7 @@ jobs:
       - name: Integrate KernelSU-Next
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
-          echo "=== Integrating KernelSU-Next for non-GKI 4.4 ==="
+          echo "=== Integrating KernelSU-Next ==="
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next || \
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s main || true
 
@@ -93,7 +96,7 @@ jobs:
           fi
 
           TARGET_CONFIG_PATH="arch/arm64/configs/$DEFCONFIG"
-          echo "Selected defconfig: $DEFCONFIG"
+          echo "Selected defconfig: $DEFCONFIG ($TARGET_CONFIG_PATH)"
           echo "DEFCONFIG_NAME=$DEFCONFIG" >> $GITHUB_ENV
 
           # Append all custom tweaks from config file
@@ -102,21 +105,28 @@ jobs:
             cat "$GITHUB_WORKSPACE/config/custom_tweaks.config" >> "$TARGET_CONFIG_PATH"
           fi
 
-          # Pure / Original Naming: Ensure no custom string branding
+          # Pure / Original Naming: Ensure clean LOCALVERSION
           sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=""/g' "$TARGET_CONFIG_PATH" || true
           echo 'CONFIG_LOCALVERSION=""' >> "$TARGET_CONFIG_PATH"
 
       - name: Build Kernel
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
-          export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH"
+          export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$GITHUB_WORKSPACE/toolchain/gcc64/bin:$GITHUB_WORKSPACE/toolchain/gcc32/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
           export KBUILD_BUILD_USER="android-build"
           export KBUILD_BUILD_HOST="buildhost"
 
-          echo "Generating configuration using $DEFCONFIG_NAME..."
-          make O=out ARCH=arm64 CC=clang HOSTCC=gcc HOSTCXX=g++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- "$DEFCONFIG_NAME"
+          echo "Generating defconfig ($DEFCONFIG_NAME)..."
+          make O=out ARCH=arm64 \
+            CC=clang \
+            HOSTCC=gcc \
+            HOSTCXX=g++ \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            "$DEFCONFIG_NAME"
 
           echo "Compiling kernel..."
           make -j$(nproc --all) O=out \
@@ -125,11 +135,24 @@ jobs:
             HOSTCC=gcc \
             HOSTCXX=g++ \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             KCFLAGS="-w" \
             HOSTCFLAGS="-w -fcommon" \
-            HOSTLDFLAGS="-w"
+            HOSTLDFLAGS="-w" || {
+              echo "Parallel build encountered an issue. Running single-threaded to isolate error:"
+              make O=out \
+                ARCH=arm64 \
+                CC=clang \
+                HOSTCC=gcc \
+                HOSTCXX=g++ \
+                CLANG_TRIPLE=aarch64-linux-gnu- \
+                CROSS_COMPILE=aarch64-linux-android- \
+                CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+                KCFLAGS="-w" \
+                HOSTCFLAGS="-w -fcommon" \
+                HOSTLDFLAGS="-w"
+            }
 
       - name: Setup AnyKernel3
         run: |
