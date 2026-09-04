@@ -15,11 +15,19 @@ on:
         description: 'Defconfig name'
         required: true
         default: 'lineage_oneplus5_defconfig'
+      create_release:
+        description: 'Publish as GitHub Release'
+        required: false
+        type: boolean
+        default: true
   push:
     branches:
       - main
     paths-ignore:
       - 'README.md'
+
+permissions:
+  contents: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -208,8 +216,19 @@ jobs:
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+        if: ${{ startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true' || github.event_name == 'push' }}
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', env.BUILD_TIME) }}
+          name: "OnePlus 5/5T Kernel (dumpling/cheeseburger) - ${{ env.BUILD_TIME }}"
+          body: |
+            ## OnePlus 5/5T (MSM8998) Kernel Build
+            - **Build Timestamp**: `${{ env.BUILD_TIME }}`
+            - **Target Defconfig**: `${{ env.DEFCONFIG_NAME }}`
+            - **Source Branch**: `${{ env.KERNEL_BRANCH }}`
+            - **Integrated Features**: KernelSU-Next, Meta OverlayFS, Performance Optimizations
+            - **Installation**: Flash the `.zip` in **TWRP** or **OrangeFox Recovery** (AnyKernel3 dynamic boot patcher).
           files: ${{ env.ZIP_PATH }}
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
