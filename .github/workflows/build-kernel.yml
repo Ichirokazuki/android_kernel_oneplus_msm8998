@@ -14,7 +14,7 @@ on:
       kernel_defconfig:
         description: 'Defconfig name'
         required: true
-        default: 'lineageos_dumpling_defconfig'
+        default: 'dumpling_defconfig'
       enable_ksu_next:
         description: 'Integrate KernelSU-Next'
         required: true
@@ -40,11 +40,18 @@ jobs:
   build:
     name: Compile Kernel
     runs-on: ubuntu-22.04
+    env:
+      KERNEL_REPO: ${{ github.event.inputs.kernel_repo || 'https://github.com/LineageOS/android_kernel_oneplus_msm8998' }}
+      KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch || 'lineage-21' }}
+      DEFCONFIG_INPUT: ${{ github.event.inputs.kernel_defconfig || 'dumpling_defconfig' }}
+      ENABLE_KSU_NEXT: ${{ github.event.inputs.enable_ksu_next || 'true' }}
+      ENABLE_SUSFS: ${{ github.event.inputs.enable_susfs || 'true' }}
+      ENABLE_GAMING: ${{ github.event.inputs.enable_gaming_tweaks || 'true' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set Environment Variables
+      - name: Set Build Timestamp
         run: |
           echo "BUILD_TIME=$(date +'%Y%m%d_%H%M%S')" >> $GITHUB_ENV
           echo "DEVICE=dumpling" >> $GITHUB_ENV
@@ -66,81 +73,84 @@ jobs:
             python3 \
             libncurses5 \
             ccache \
-            patch
+            patch \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi
 
       - name: Download Proton Clang Toolchain
         run: |
-          mkdir -p $GITHUB_WORKSPACE/toolchain
+          mkdir -p "$GITHUB_WORKSPACE/toolchain"
           echo "Cloning Proton Clang..."
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git $GITHUB_WORKSPACE/toolchain/clang
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git "$GITHUB_WORKSPACE/toolchain/clang"
 
       - name: Clone Kernel Source
         run: |
-          REPO_URL="${{ github.event.inputs.kernel_repo }}"
-          BRANCH="${{ github.event.inputs.kernel_branch }}"
-          [ -z "$REPO_URL" ] && REPO_URL="https://github.com/LineageOS/android_kernel_oneplus_msm8998"
-          [ -z "$BRANCH" ] && BRANCH="lineage-21"
-          echo "Cloning $REPO_URL ($BRANCH)..."
-          git clone --depth=1 -b "$BRANCH" "$REPO_URL" $GITHUB_WORKSPACE/kernel
+          echo "Cloning $KERNEL_REPO ($KERNEL_BRANCH)..."
+          git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" "$GITHUB_WORKSPACE/kernel"
 
       - name: Integrate KernelSU-Next
-        if: ${{ github.event_name == 'push' || github.event.inputs.enable_ksu_next == 'true' || github.event.inputs.enable_ksu_next == true }}
         run: |
-          cd $GITHUB_WORKSPACE/kernel
-          echo "=== Integrating KernelSU-Next ==="
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          if [ "$ENABLE_KSU_NEXT" = "true" ]; then
+            cd "$GITHUB_WORKSPACE/kernel"
+            echo "=== Integrating KernelSU-Next ==="
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next || \
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s main || true
+          fi
 
       - name: Integrate SUSFS (susfs4ksu) & Meta OverlayFS Patches
-        if: ${{ github.event_name == 'push' || github.event.inputs.enable_susfs == 'true' || github.event.inputs.enable_susfs == true }}
         run: |
-          cd $GITHUB_WORKSPACE
-          echo "=== Cloning SUSFS for 4.4 Kernel ==="
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b kernel-4.4 susfs_src || git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git susfs_src
+          if [ "$ENABLE_SUSFS" = "true" ]; then
+            cd "$GITHUB_WORKSPACE"
+            echo "=== Cloning SUSFS for 4.4 Kernel ==="
+            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b kernel-4.4 "$GITHUB_WORKSPACE/susfs_src" || \
+            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git "$GITHUB_WORKSPACE/susfs_src" || true
 
-          # Copy SUSFS core kernel files
-          if [ -d "$GITHUB_WORKSPACE/susfs_src/kernel_patches" ]; then
-            cp -r $GITHUB_WORKSPACE/susfs_src/kernel_patches/fs/* $GITHUB_WORKSPACE/kernel/fs/ || true
-            cp -r $GITHUB_WORKSPACE/susfs_src/kernel_patches/include/linux/* $GITHUB_WORKSPACE/kernel/include/linux/ || true
+            if [ -d "$GITHUB_WORKSPACE/susfs_src" ]; then
+              echo "Copying SUSFS files..."
+              mkdir -p "$GITHUB_WORKSPACE/kernel/fs"
+              mkdir -p "$GITHUB_WORKSPACE/kernel/include/linux"
+              find "$GITHUB_WORKSPACE/susfs_src" -name "susfs.c" -exec cp {} "$GITHUB_WORKSPACE/kernel/fs/" \; || true
+              find "$GITHUB_WORKSPACE/susfs_src" -name "susfs.h" -exec cp {} "$GITHUB_WORKSPACE/kernel/include/linux/" \; || true
+              find "$GITHUB_WORKSPACE/susfs_src" -name "sus_su.h" -exec cp {} "$GITHUB_WORKSPACE/kernel/include/linux/" \; || true
 
-            cd $GITHUB_WORKSPACE/kernel
-            # Apply SUSFS patch to kernel source if patch exists
-            SUSFS_KERNEL_PATCH=$(find $GITHUB_WORKSPACE/susfs_src/kernel_patches -name "*50_add_susfs_in_kernel*.patch" | head -n 1)
-            if [ -n "$SUSFS_KERNEL_PATCH" ] && [ -f "$SUSFS_KERNEL_PATCH" ]; then
-              echo "Applying kernel patch: $SUSFS_KERNEL_PATCH"
-              patch -p1 -N -s < "$SUSFS_KERNEL_PATCH" || echo "Note: Some patch hunks were already present or skipped."
-            fi
+              cd "$GITHUB_WORKSPACE/kernel"
+              for p in $(find "$GITHUB_WORKSPACE/susfs_src" -name "*50_add_susfs_in_kernel*.patch" 2>/dev/null); do
+                echo "Checking kernel patch: $p"
+                patch -p1 -N --dry-run -s < "$p" 2>/dev/null && patch -p1 -N -s < "$p" || echo "Kernel patch skipped/already present."
+              done
 
-            # Apply SUSFS patch to KernelSU if patch exists
-            if [ -d "$GITHUB_WORKSPACE/kernel/KernelSU" ] || [ -d "$GITHUB_WORKSPACE/kernel/drivers/kernelsu" ]; then
               KSU_DIR="$GITHUB_WORKSPACE/kernel/KernelSU"
               [ ! -d "$KSU_DIR" ] && KSU_DIR="$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-              SUSFS_KSU_PATCH=$(find $GITHUB_WORKSPACE/susfs_src/kernel_patches -name "*10_enable_susfs_for_ksu*.patch" | head -n 1)
-              if [ -n "$SUSFS_KSU_PATCH" ] && [ -f "$SUSFS_KSU_PATCH" ]; then
-                echo "Applying KSU patch: $SUSFS_KSU_PATCH"
+              if [ -d "$KSU_DIR" ]; then
                 cd "$KSU_DIR"
-                patch -p1 -N -s < "$SUSFS_KSU_PATCH" || echo "Note: KSU patch hunks already present or skipped."
-                cd $GITHUB_WORKSPACE/kernel
+                for p in $(find "$GITHUB_WORKSPACE/susfs_src" -name "*10_enable_susfs_for_ksu*.patch" 2>/dev/null); do
+                  echo "Checking KSU patch: $p"
+                  patch -p1 -N --dry-run -s < "$p" 2>/dev/null && patch -p1 -N -s < "$p" || echo "KSU patch skipped/already present."
+                done
               fi
             fi
           fi
 
-      - name: Apply Defconfig Tweaks (KernelSU, SUSFS, Meta OverlayFS, Gaming & Daily Usage)
+      - name: Apply Defconfig Tweaks
         run: |
-          cd $GITHUB_WORKSPACE/kernel
-          DEFCONFIG="${{ github.event.inputs.kernel_defconfig }}"
-          [ -z "$DEFCONFIG" ] && DEFCONFIG="lineageos_dumpling_defconfig"
+          cd "$GITHUB_WORKSPACE/kernel"
+          DEFCONFIG="$DEFCONFIG_INPUT"
 
-          TARGET_CONFIG_PATH="arch/arm64/configs/$DEFCONFIG"
-          if [ ! -f "$TARGET_CONFIG_PATH" ]; then
-            if [ -f "arch/arm64/configs/msm8998_defconfig" ]; then
-              TARGET_CONFIG_PATH="arch/arm64/configs/msm8998_defconfig"
+          if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
+            if [ -f "arch/arm64/configs/dumpling_defconfig" ]; then
+              DEFCONFIG="dumpling_defconfig"
+            elif [ -f "arch/arm64/configs/cheeseburger_defconfig" ]; then
+              DEFCONFIG="cheeseburger_defconfig"
+            elif [ -f "arch/arm64/configs/msm8998_defconfig" ]; then
               DEFCONFIG="msm8998_defconfig"
             fi
           fi
 
-          echo "Configuring: $TARGET_CONFIG_PATH"
+          TARGET_CONFIG_PATH="arch/arm64/configs/$DEFCONFIG"
+          echo "Selected defconfig: $DEFCONFIG"
+          echo "DEFCONFIG_NAME=$DEFCONFIG" >> $GITHUB_ENV
 
-          # 1. KernelSU & Kprobes
+          # 1. KernelSU & Kprobes & SUSFS
           cat << 'EOF' >> "$TARGET_CONFIG_PATH"
 
 # KernelSU-Next Configuration
@@ -174,10 +184,10 @@ CONFIG_OVERLAY_FS_METACOPY=y
 EOF
 
           # 2. Gaming & Daily Usage Performance Tweaks
-          if [ "${{ github.event_name }}" == "push" ] || [ "${{ github.event.inputs.enable_gaming_tweaks }}" == "true" ] || [ "${{ github.event.inputs.enable_gaming_tweaks }}" == true ]; then
+          if [ "$ENABLE_GAMING" = "true" ]; then
             cat << 'EOF' >> "$TARGET_CONFIG_PATH"
 
-# Gaming & Daily Usage Performance & Latency Optimizations
+# Gaming & Daily Usage Performance Optimizations
 CONFIG_TCP_CONG_ADVANCED=y
 CONFIG_TCP_CONG_BBR=y
 CONFIG_DEFAULT_TCP_CONG="bbr"
@@ -209,58 +219,54 @@ EOF
 
       - name: Build Kernel
         run: |
-          cd $GITHUB_WORKSPACE/kernel
+          cd "$GITHUB_WORKSPACE/kernel"
           export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
           export KBUILD_BUILD_USER="android-build"
           export KBUILD_BUILD_HOST="buildhost"
 
-          DEFCONFIG="${{ github.event.inputs.kernel_defconfig }}"
-          [ -z "$DEFCONFIG" ] && DEFCONFIG="lineageos_dumpling_defconfig"
-          if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
-            DEFCONFIG="msm8998_defconfig"
-          fi
-
-          echo "Generating configuration using $DEFCONFIG..."
-          make O=out ARCH=arm64 "$DEFCONFIG"
+          echo "Generating configuration using $DEFCONFIG_NAME..."
+          make O=out ARCH=arm64 "$DEFCONFIG_NAME"
 
           echo "Compiling kernel..."
           make -j$(nproc --all) O=out \
             ARCH=arm64 \
             CC=clang \
+            HOSTCC=gcc \
+            HOSTCXX=g++ \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
       - name: Setup AnyKernel3
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $GITHUB_WORKSPACE/anykernel
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/anykernel"
           if [ -f "$GITHUB_WORKSPACE/anykernel_config/anykernel.sh" ]; then
             cp "$GITHUB_WORKSPACE/anykernel_config/anykernel.sh" "$GITHUB_WORKSPACE/anykernel/anykernel.sh"
           fi
 
       - name: Package with AnyKernel3
         run: |
-          cd $GITHUB_WORKSPACE
           KERNEL_OUT="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot"
           
           if [ -f "$KERNEL_OUT/Image.gz-dtb" ]; then
-            cp "$KERNEL_OUT/Image.gz-dtb" $GITHUB_WORKSPACE/anykernel/
+            cp "$KERNEL_OUT/Image.gz-dtb" "$GITHUB_WORKSPACE/anykernel/"
           elif [ -f "$KERNEL_OUT/Image.gz" ]; then
-            cp "$KERNEL_OUT/Image.gz" $GITHUB_WORKSPACE/anykernel/
+            cp "$KERNEL_OUT/Image.gz" "$GITHUB_WORKSPACE/anykernel/"
             if [ -f "$KERNEL_OUT/dtb.img" ]; then
-              cp "$KERNEL_OUT/dtb.img" $GITHUB_WORKSPACE/anykernel/
+              cp "$KERNEL_OUT/dtb.img" "$GITHUB_WORKSPACE/anykernel/"
             fi
           elif [ -f "$KERNEL_OUT/Image" ]; then
-            cp "$KERNEL_OUT/Image" $GITHUB_WORKSPACE/anykernel/
+            cp "$KERNEL_OUT/Image" "$GITHUB_WORKSPACE/anykernel/"
           else
-            echo "Error: Compiled kernel image not found!"
+            echo "Error: Compiled kernel image not found in $KERNEL_OUT!"
+            ls -la "$KERNEL_OUT" || true
             exit 1
           fi
 
-          cd $GITHUB_WORKSPACE/anykernel
-          ZIP_NAME="kernel-dumpling-${{ env.BUILD_TIME }}.zip"
+          cd "$GITHUB_WORKSPACE/anykernel"
+          ZIP_NAME="kernel-dumpling-${BUILD_TIME}.zip"
           zip -r9 "$ZIP_NAME" * -x .git .github README.md *placeholder
           echo "ZIP_PATH=$GITHUB_WORKSPACE/anykernel/$ZIP_NAME" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV

@@ -31,14 +31,11 @@ Automated GitHub Actions cloud compilation for OnePlus 5T (`dumpling`) and OnePl
 4. Click **Create repository**.
 
 ### 2. Push this Workspace to GitHub
-Open PowerShell in this directory (`C:\Users\indra\.gemini\antigravity-ide\scratch\device_oneplus_dumpling`):
+Open PowerShell in this directory (`C:\Users\indra\.gemini\antigravity-ide\scratch\android_kernel_oneplus_msm8998`):
 
 ```powershell
-git init
 git add .
-git commit -m "Initialize android_kernel_oneplus_msm8998 with KernelSU-Next, SUSFS & Meta OverlayFS"
-git branch -M main
-git remote add origin https://github.com/ichirokazuki/android_kernel_oneplus_msm8998.git
+git commit -m "Fix YAML syntax and update workflow"
 git push -u origin main
 ```
 
